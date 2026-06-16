@@ -1,0 +1,7 @@
+.codegraph/
+.DS_Store
+
+# Go build outputs
+bin/
+*.test
+coverage.out
