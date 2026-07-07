@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"goserveractorfsm/internal/logx"
 	"goserveractorfsm/internal/protocol"
@@ -25,44 +26,21 @@ func TestSessionHandlesKickRoundTrip(t *testing.T) {
 	}
 	defer conn.Close()
 
-	requestPayload, err := proto.Marshal(&kickpb.KickRequest{
-		HammerType: 1,
-		KickShrew:  true,
-		NumOfShrew: 1,
-		ComboId:    5,
+	joined := joinRoom(t, conn, 1)
+	cycle := joined.GetSnapshot().GetActiveCycles()[0]
+	waitUntilStand(t, joined.GetSnapshot(), cycle)
+	writeEnvelope(t, conn, 42, protocol.KickReqID, &kickpb.KickRequest{
+		AttackEpoch: joined.GetAttackEpoch(),
+		HammerType:  1,
+		KickShrew:   true,
+		NumOfShrew:  1,
+		ComboId:     5,
 		Shrews: []*kickpb.KickShrew{
-			{ShrewIndex: 2, ProtectType: 0},
+			{ShrewIndex: cycle.GetHoleIndex(), ProtectType: cycle.GetProtectType(), SpawnSeq: cycle.GetSpawnSeq()},
 		},
 	})
-	if err != nil {
-		t.Fatalf("Marshal KickRequest error = %v", err)
-	}
 
-	wireMessage, err := proto.Marshal(&kickpb.Envelope{
-		SeqId:   42,
-		MsgId:   protocol.KickReqID.Uint32(),
-		Payload: requestPayload,
-	})
-	if err != nil {
-		t.Fatalf("Marshal Envelope error = %v", err)
-	}
-
-	if err := conn.WriteMessage(websocket.BinaryMessage, wireMessage); err != nil {
-		t.Fatalf("WriteMessage error = %v", err)
-	}
-
-	messageType, data, err := conn.ReadMessage()
-	if err != nil {
-		t.Fatalf("ReadMessage error = %v", err)
-	}
-	if messageType != websocket.BinaryMessage {
-		t.Fatalf("messageType = %d, want BinaryMessage", messageType)
-	}
-
-	envelope := &kickpb.Envelope{}
-	if err := proto.Unmarshal(data, envelope); err != nil {
-		t.Fatalf("Unmarshal response Envelope error = %v", err)
-	}
+	envelope := readEnvelope(t, conn)
 	if envelope.GetSeqId() != 42 {
 		t.Fatalf("Envelope.SeqId = %d, want 42", envelope.GetSeqId())
 	}
@@ -82,6 +60,26 @@ func TestSessionHandlesKickRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSessionHandlesJoinRoomRequest(t *testing.T) {
+	server := httptest.NewServer(NewHandler())
+	defer server.Close()
+
+	url := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws"
+	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+	if err != nil {
+		t.Fatalf("Dial error = %v", err)
+	}
+	defer conn.Close()
+
+	response := joinRoom(t, conn, 7)
+	if response.GetPlayerId() == 0 || response.GetAttackId() == 0 || response.GetAttackEpoch() == 0 {
+		t.Fatalf("JoinRoomResponse ids = player %d attack %d epoch %d, want non-zero", response.GetPlayerId(), response.GetAttackId(), response.GetAttackEpoch())
+	}
+	if len(response.GetSnapshot().GetActiveCycles()) != 9 {
+		t.Fatalf("snapshot active cycles = %d, want 9", len(response.GetSnapshot().GetActiveCycles()))
+	}
+}
+
 func TestSessionUsesEnvelopeSeqIDAsOnlyRequestReplyID(t *testing.T) {
 	server := httptest.NewServer(NewHandler())
 	defer server.Close()
@@ -93,41 +91,21 @@ func TestSessionUsesEnvelopeSeqIDAsOnlyRequestReplyID(t *testing.T) {
 	}
 	defer conn.Close()
 
-	requestPayload, err := proto.Marshal(&kickpb.KickRequest{
-		HammerType: 1,
-		KickShrew:  true,
-		NumOfShrew: 1,
-		ComboId:    5,
+	joined := joinRoom(t, conn, 1)
+	cycle := joined.GetSnapshot().GetActiveCycles()[0]
+	waitUntilStand(t, joined.GetSnapshot(), cycle)
+	writeEnvelope(t, conn, 88, protocol.KickReqID, &kickpb.KickRequest{
+		AttackEpoch: joined.GetAttackEpoch(),
+		HammerType:  1,
+		KickShrew:   true,
+		NumOfShrew:  1,
+		ComboId:     5,
 		Shrews: []*kickpb.KickShrew{
-			{ShrewIndex: 2, ProtectType: 0},
+			{ShrewIndex: cycle.GetHoleIndex(), ProtectType: cycle.GetProtectType(), SpawnSeq: cycle.GetSpawnSeq()},
 		},
 	})
-	if err != nil {
-		t.Fatalf("Marshal KickRequest error = %v", err)
-	}
 
-	wireMessage, err := proto.Marshal(&kickpb.Envelope{
-		SeqId:   88,
-		MsgId:   protocol.KickReqID.Uint32(),
-		Payload: requestPayload,
-	})
-	if err != nil {
-		t.Fatalf("Marshal Envelope error = %v", err)
-	}
-
-	if err := conn.WriteMessage(websocket.BinaryMessage, wireMessage); err != nil {
-		t.Fatalf("WriteMessage error = %v", err)
-	}
-
-	_, data, err := conn.ReadMessage()
-	if err != nil {
-		t.Fatalf("ReadMessage error = %v", err)
-	}
-
-	envelope := &kickpb.Envelope{}
-	if err := proto.Unmarshal(data, envelope); err != nil {
-		t.Fatalf("Unmarshal response Envelope error = %v", err)
-	}
+	envelope := readEnvelope(t, conn)
 	if envelope.GetSeqId() != 88 {
 		t.Fatalf("Envelope.SeqId = %d, want 88", envelope.GetSeqId())
 	}
@@ -153,34 +131,20 @@ func TestSessionLogsClientOperationAndResult(t *testing.T) {
 	}
 	defer conn.Close()
 
-	requestPayload, err := proto.Marshal(&kickpb.KickRequest{
-		HammerType: 1,
-		KickShrew:  true,
-		NumOfShrew: 1,
-		ComboId:    9,
+	joined := joinRoom(t, conn, 1)
+	cycle := joined.GetSnapshot().GetActiveCycles()[0]
+	waitUntilStand(t, joined.GetSnapshot(), cycle)
+	writeEnvelope(t, conn, 77, protocol.KickReqID, &kickpb.KickRequest{
+		AttackEpoch: joined.GetAttackEpoch(),
+		HammerType:  1,
+		KickShrew:   true,
+		NumOfShrew:  1,
+		ComboId:     9,
 		Shrews: []*kickpb.KickShrew{
-			{ShrewIndex: 6, ProtectType: 0},
+			{ShrewIndex: cycle.GetHoleIndex(), ProtectType: cycle.GetProtectType(), SpawnSeq: cycle.GetSpawnSeq()},
 		},
 	})
-	if err != nil {
-		t.Fatalf("Marshal KickRequest error = %v", err)
-	}
-
-	wireMessage, err := proto.Marshal(&kickpb.Envelope{
-		SeqId:   77,
-		MsgId:   protocol.KickReqID.Uint32(),
-		Payload: requestPayload,
-	})
-	if err != nil {
-		t.Fatalf("Marshal Envelope error = %v", err)
-	}
-
-	if err := conn.WriteMessage(websocket.BinaryMessage, wireMessage); err != nil {
-		t.Fatalf("WriteMessage error = %v", err)
-	}
-	if _, _, err := conn.ReadMessage(); err != nil {
-		t.Fatalf("ReadMessage error = %v", err)
-	}
+	_ = readEnvelope(t, conn)
 
 	got := logs.String()
 	for _, want := range []string{
@@ -200,4 +164,66 @@ func TestSessionLogsClientOperationAndResult(t *testing.T) {
 			t.Fatalf("logs = %q, want %q", got, want)
 		}
 	}
+}
+
+func joinRoom(t *testing.T, conn *websocket.Conn, seqID uint32) *kickpb.JoinRoomResponse {
+	t.Helper()
+	writeEnvelope(t, conn, seqID, protocol.JoinRoomReqID, &kickpb.JoinRoomRequest{})
+	envelope := readEnvelope(t, conn)
+	if envelope.GetSeqId() != seqID {
+		t.Fatalf("Envelope.SeqId = %d, want %d", envelope.GetSeqId(), seqID)
+	}
+	if envelope.GetMsgId() != protocol.JoinRoomRespID.Uint32() {
+		t.Fatalf("Envelope.MsgId = %d, want %d", envelope.GetMsgId(), protocol.JoinRoomRespID)
+	}
+	response := &kickpb.JoinRoomResponse{}
+	if err := proto.Unmarshal(envelope.GetPayload(), response); err != nil {
+		t.Fatalf("Unmarshal JoinRoomResponse error = %v", err)
+	}
+	return response
+}
+
+func waitUntilStand(t *testing.T, snapshot *kickpb.GameSnapshot, cycle *kickpb.ShrewCycle) {
+	t.Helper()
+	delayMS := cycle.GetStandStartMs() - snapshot.GetServerTimeMs() + 20
+	if delayMS <= 0 {
+		return
+	}
+	time.Sleep(time.Duration(delayMS) * time.Millisecond)
+}
+
+func writeEnvelope(t *testing.T, conn *websocket.Conn, seqID uint32, msgID protocol.MsgID, payload proto.Message) {
+	t.Helper()
+	payloadData, err := proto.Marshal(payload)
+	if err != nil {
+		t.Fatalf("Marshal payload error = %v", err)
+	}
+	wireMessage, err := proto.Marshal(&kickpb.Envelope{
+		SeqId:   seqID,
+		MsgId:   msgID.Uint32(),
+		Payload: payloadData,
+	})
+	if err != nil {
+		t.Fatalf("Marshal Envelope error = %v", err)
+	}
+	if err := conn.WriteMessage(websocket.BinaryMessage, wireMessage); err != nil {
+		t.Fatalf("WriteMessage error = %v", err)
+	}
+}
+
+func readEnvelope(t *testing.T, conn *websocket.Conn) *kickpb.Envelope {
+	t.Helper()
+	messageType, data, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("ReadMessage error = %v", err)
+	}
+	if messageType != websocket.BinaryMessage {
+		t.Fatalf("messageType = %d, want BinaryMessage", messageType)
+	}
+
+	envelope := &kickpb.Envelope{}
+	if err := proto.Unmarshal(data, envelope); err != nil {
+		t.Fatalf("Unmarshal Envelope error = %v", err)
+	}
+	return envelope
 }

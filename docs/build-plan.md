@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a minimal Go WebSocket game server for `../LayaEcsDemo` using protobuf, a lightweight self-built Actor model, a self-built FSM, and TDD.
+**Goal:** Build a minimal Go WebSocket game server for `../LayaEcsDemo` using protobuf, a lightweight self-built Actor model, a self-built FSM, service-authoritative shrew timelines, and TDD.
 
-**Architecture:** WebSocket owns connections, Protocol owns protobuf encoding, Actor owns concurrent isolation, FSM owns process transitions, and GameLogic owns pure game rules. The first deliverable is one working `KickRequest -> KickResponse` loop.
+**Architecture:** WebSocket owns connections, Protocol owns protobuf encoding, `RoomActor` owns large access and grouping, `AttackActor` owns one group's shrew timeline, `PlayerActor` owns one player's state, FSM owns process transitions, and GameLogic owns pure game rules.
 
 **Tech Stack:** Go, protobuf, WebSocket, lightweight in-repo Actor runtime, in-repo FSM, Go `testing`.
 
@@ -21,7 +21,9 @@
 - `internal/protocol/`: protobuf envelope and codec.
 - `internal/ws/`: WebSocket session handling.
 - `internal/game/`: wires player/session use cases.
+- `internal/room/`: RoomActor, AttackActor, group assignment, snapshot and broadcast.
 - `docs/server-tutorial.md`: learning-oriented architecture guide.
+- `docs/client-sync-contract.md`: client protocol and behavior contract.
 
 ## Phase 1: Project Skeleton
 
@@ -74,40 +76,62 @@ Expected result: one player can process requests serially without locks in game 
 
 ## Phase 6: WebSocket Integration
 
-- [ ] Add WebSocket accept route.
-- [ ] Create one `SessionActor` per connection.
-- [ ] Decode protobuf packets into actor messages.
-- [ ] Encode actor responses back to protobuf packets.
+- [x] Add WebSocket accept route.
+- [x] Split WebSocket read loop and write loop.
+- [x] Decode protobuf packets into actor messages.
+- [x] Encode actor responses back to protobuf packets.
 - [ ] Add heartbeat with `Ping` and `Pong`.
-- [ ] Cleanly stop session actor on disconnect.
+- [x] Notify RoomActor on disconnect.
 
 Expected result: a real client connection can complete one kick round trip.
 
-## Phase 7: Client Alignment
+## Phase 7: Service-Authoritative Timeline
 
-- [ ] Update `LayaEcsDemo` network layer plan to replace JSON mock packets with protobuf packets.
+- [x] Add `JoinRoomReqID` and `JoinRoomRespID`.
+- [x] Add `GameSnapshotReqID` and `GameSnapshotRespID`.
+- [x] Add `TimeSyncReqID` and `TimeSyncRespID`.
+- [x] Add `ShrewTimelinePushID` and `ShrewStatePushID` message definitions.
+- [x] Add `attack_epoch` to `KickRequest`.
+- [x] Add `spawn_seq` to `KickShrew`.
+- [x] Add pure `ShrewTimeline` tests.
+- [x] Add `RoomActor` grouping tests.
+- [x] Add `AttackActor` snapshot, kick, and state push tests.
+- [ ] Add periodic `ShrewTimelinePush` generation for future cycles.
+- [ ] Add reconnect identity binding instead of treating every connection as a new player.
+
+Expected result: clients can render server-provided timelines and server can reject stale hit requests.
+
+## Phase 8: Client Alignment
+
+- [x] Document client contract in `docs/client-sync-contract.md`.
+- [ ] Update `LayaEcsDemo` network layer plan to consume GoServerActorFsm proto messages.
 - [ ] Preserve request-response matching behavior through authoritative `Envelope.seq_id`.
-- [ ] Add a temporary compatibility note if JSON mock and protobuf server coexist during migration.
+- [ ] Route `seq_id = 0` push messages separately from pending request responses.
+- [ ] Stop client-side random shrew spawning.
+- [ ] Store `attack_epoch`, `timeline_rev`, and per-hole `spawn_seq` on the client.
+- [ ] Add simple TimeSync offset calculation on the client.
 - [ ] Run one manual round trip: click client, observe `KickResponse`.
+- [ ] Run two or three clients and verify they share the same `attack_id` until room size is full.
 
 Expected result: server and client agree on protocol shape and request matching.
 
-## Phase 8: Teaching Polish
+## Phase 9: Teaching Polish
 
-- [ ] Add small diagrams for Actor, FSM, and request flow.
-- [ ] Add one tutorial section per implemented package.
+- [x] Add small diagrams for Actor, FSM, and request flow.
+- [x] Add one tutorial section per implemented package.
 - [ ] Keep examples short and runnable.
-- [ ] Update `AGENTS.md` only when the reading order or hard rules change.
+- [x] Update `AGENTS.md` only when the reading order or hard rules change.
 
 Expected result: the project remains useful as both codebase and teaching material.
 
 ## Verification
 
 - [x] Run `go test ./...`.
-- [ ] Run protobuf generation and confirm no dirty generated drift after rerun.
+- [x] Run protobuf generation and confirm no dirty generated drift after rerun.
 - [ ] Start server locally.
-- [ ] Complete one client-server kick round trip.
+- [x] Complete one server-side WebSocket kick round trip in tests.
+- [ ] Complete one real LayaEcsDemo client-server kick round trip.
 
 ## Scope Guard
 
-Do not add database, login, multi-room matchmaking, persistence, ranking, deployment scripts, or distributed actor behavior until the first protobuf kick round trip is working.
+Do not add database, login, persistence, ranking, deployment scripts, distributed actor behavior, or complex latency compensation until the first LayaEcsDemo client-server synchronized timeline round trip is working.

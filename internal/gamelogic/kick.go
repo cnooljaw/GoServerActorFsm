@@ -11,6 +11,7 @@ type KickInput struct {
 type KickShrew struct {
 	Index       int
 	ProtectType int
+	SpawnSeq    uint64
 }
 
 type KickResult struct {

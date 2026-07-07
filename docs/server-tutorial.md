@@ -4,19 +4,20 @@
 
 ## 1. 这个服务器做什么
 
-客户端是 `../LayaEcsDemo`，玩法是打地鼠。客户端当前点击后会发送击打请求，服务器需要返回金币、怒气、体力、分数、连击和被击中地鼠奖励。
+客户端是 `../LayaEcsDemo`，玩法是打地鼠。现在地鼠产生、地鼠状态时间、命中校验都由服务端决定，客户端只按服务端时间线表现动画。
 
-第一阶段只做一条链路：
+当前核心链路：
 
 ```text
-玩家点击
-  -> LayaEcsDemo 发送 KickRequest
-  -> Go WebSocket 收到 protobuf 包
-  -> SessionActor 转给 PlayerActor
-  -> PlayerActor 触发 FSM
-  -> GameLogic 计算奖励
-  -> PlayerActor 回 KickResponse
-  -> WebSocket 写回客户端
+LayaEcsDemo WebSocket
+  -> JoinRoomRequest
+  -> RoomActor 分配 AttackActor
+  -> AttackActor 返回 GameSnapshot
+  -> 客户端按服务端时间线播放地鼠
+  -> KickRequest{attack_epoch, spawn_seq}
+  -> AttackActor 校验时间线
+  -> PlayerActor 更新个人状态
+  -> KickResponse + ShrewStatePush
 ```
 
 ## 2. 为什么分成五层
@@ -55,11 +56,26 @@ ActorRef
 - Actor 之间通过 `ActorRef.Tell(msg)` 通信。
 - 先实现 `Tell`，后续需要请求-响应时再加 `Ask`。
 
-建议第一批 Actor：
+当前 Actor：
 
-- `SessionActor`：绑定一个 WebSocket 连接，负责把网络包转成玩家消息。
-- `PlayerActor`：保存玩家局内状态，处理击打请求。
-- `RoomActor`：后续多人或房间流程再加，第一阶段可以先不做。
+- WebSocket Session：不是业务 Actor，只做连接、读 loop、写 loop。
+- `RoomActor`：大的接入入口，负责把连接分配给某个组。
+- `AttackActor`：几个人一组的游戏 owner，默认 3 人一组。
+- `PlayerActor`：保存单个玩家状态，处理个人奖励、怒气、锤子等。
+
+分层关系：
+
+```text
+RoomActor
+  -> AttackActor(group 1)
+      -> PlayerActor(player 1)
+      -> PlayerActor(player 2)
+      -> PlayerActor(player 3)
+  -> AttackActor(group 2)
+      -> PlayerActor(...)
+```
+
+`AttackActor` 持有本组唯一的 `ShrewTimeline`。同一个组内的多个客户端看到同一份 `attack_epoch`、`timeline_rev` 和洞位时间线。
 
 ## 4. FSM 管流程，不管规则
 
@@ -90,7 +106,7 @@ InGame + KickReceived -> InGame
 `GameLogic` 应该像普通函数一样容易测试：
 
 ```text
-输入：玩家状态、锤子类型、命中的地鼠、comboId
+输入：玩家状态、锤子类型、命中的地鼠、comboId、spawnSeq
 输出：金币、怒气、体力、分数、combo、地鼠奖励明细
 ```
 
@@ -109,10 +125,25 @@ InGame + KickReceived -> InGame
 ../LayaEcsDemo/src/network/ProtocolTypes.ts
 ```
 
-第一阶段把它迁移成共享 `.proto`：
+协议源是：
 
+```text
+api/proto/kick.proto
+```
+
+当前核心消息：
+
+- `Envelope`
+- `JoinRoomRequest`
+- `JoinRoomResponse`
+- `GameSnapshotRequest`
+- `GameSnapshotResponse`
+- `TimeSyncRequest`
+- `TimeSyncResponse`
 - `KickRequest`
 - `KickResponse`
+- `ShrewTimelinePush`
+- `ShrewStatePush`
 - `ErrorResponse`
 - `Ping`
 - `Pong`
@@ -122,7 +153,11 @@ InGame + KickReceived -> InGame
 - `.proto` 是唯一协议源。
 - Go 和 TypeScript 都从 `.proto` 生成。
 - 生成文件不要手改。
-- 字段名尽量兼容当前客户端含义。
+- `Envelope.seq_id` 是请求和回包匹配字段。
+- `Envelope.msg_id` 是协议路由字段。
+- `KickRequest.attack_epoch` 防止旧局请求打到新局。
+- `KickShrew.spawn_seq` 防止旧地鼠点击误打到新一轮地鼠。
+- 服务端 push 使用 `seq_id = 0`。
 
 ## 7. TDD 怎么落地
 
@@ -132,7 +167,8 @@ InGame + KickReceived -> InGame
 2. 再写 `internal/fsm` 测试，验证非法状态不能处理击打。
 3. 再写 `internal/actor` 测试，验证同一 Actor 串行处理消息。
 4. 再写 `internal/protocol` 测试，验证 protobuf 编解码。
-5. 最后写 `internal/ws` 集成测试或手动联调。
+5. 再写 `internal/room` 测试，验证分组、快照、命中广播。
+6. 最后写 `internal/ws` 集成测试或手动联调。
 
 不要从 WebSocket 开始写。网络最难调，规则最容易测，先把最容易测的部分打牢。
 
@@ -146,7 +182,8 @@ internal/ws/            WebSocket 连接和读写循环
 internal/actor/         轻量自研 Actor runtime
 internal/fsm/           自研 FSM
 internal/gamelogic/     纯游戏规则
-internal/game/          组装玩家、房间、局内上下文
+internal/game/          玩家 Actor 和玩家局内状态
+internal/room/          RoomActor、AttackActor、分组和广播
 internal/config/        游戏配置
 docs/                   教程、计划、约束
 ```
@@ -154,7 +191,8 @@ docs/                   教程、计划、约束
 ## 9. 第一阶段完成标准
 
 - 本地 Go server 能启动。
-- 客户端能通过 WebSocket 发送一次击打。
-- 服务端能返回 protobuf `KickResponse`。
-- `GameLogic`、`FSM`、`Actor` 至少各有一组单测。
-- 文档能让新读者理解为什么这样分层。
+- 客户端能通过 WebSocket 发送 `JoinRoomRequest`。
+- 服务端能返回带 snapshot 的 `JoinRoomResponse`。
+- 客户端能按 snapshot 的 `spawn_seq` 发送一次击打。
+- 服务端能返回 protobuf `KickResponse` 并广播 `ShrewStatePush`。
+- `GameLogic`、`FSM`、`Actor`、`Room`、`WebSocket` 都有测试覆盖。

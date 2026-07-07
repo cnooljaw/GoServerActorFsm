@@ -19,15 +19,20 @@ type KickReply struct {
 }
 
 type PlayerActor struct {
-	flow *fsm.PlayerFSM
+	playerID uint64
+	flow     *fsm.PlayerFSM
 }
 
 func NewPlayerActor() *PlayerActor {
+	return NewPlayerActorWithID(0)
+}
+
+func NewPlayerActorWithID(playerID uint64) *PlayerActor {
 	flow := fsm.NewPlayerFSM()
 	_ = flow.Apply(fsm.EventConnect)
 	_ = flow.Apply(fsm.EventEnterGame)
 
-	return &PlayerActor{flow: flow}
+	return &PlayerActor{playerID: playerID, flow: flow}
 }
 
 func (p *PlayerActor) Handle(ctx context.Context, msg actor.Message) {

@@ -20,7 +20,7 @@ func NewServer(cfg config.ServerConfig) *Server {
 
 func NewServerWithLogger(cfg config.ServerConfig, logger *slog.Logger) *Server {
 	mux := http.NewServeMux()
-	mux.Handle("/ws", NewHandlerWithLogger(logger))
+	mux.Handle("/ws", NewHandlerWithConfig(cfg, logger))
 
 	return &Server{
 		addr:    fmt.Sprintf(":%d", cfg.Port),

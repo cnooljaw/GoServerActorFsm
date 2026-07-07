@@ -60,7 +60,34 @@ func TestMsgNameReturnsStableNames(t *testing.T) {
 	if got := MsgName(KickReqID); got != "kick_req" {
 		t.Fatalf("MsgName(KickReqID) = %q, want kick_req", got)
 	}
+	if got := MsgName(JoinRoomReqID); got != "join_room_req" {
+		t.Fatalf("MsgName(JoinRoomReqID) = %q, want join_room_req", got)
+	}
+	if got := MsgName(ShrewTimelinePushID); got != "shrew_timeline_push" {
+		t.Fatalf("MsgName(ShrewTimelinePushID) = %q, want shrew_timeline_push", got)
+	}
 	if got := MsgName(MsgID(999999)); got != "unknown" {
 		t.Fatalf("MsgName(unknown) = %q, want unknown", got)
+	}
+}
+
+func TestKickShrewCarriesSpawnSeq(t *testing.T) {
+	input := &kickpb.KickShrew{
+		ShrewIndex:  4,
+		ProtectType: 0,
+		SpawnSeq:    99,
+	}
+
+	encoded, err := Encode(input)
+	if err != nil {
+		t.Fatalf("Encode(KickShrew) error = %v", err)
+	}
+
+	decoded := &kickpb.KickShrew{}
+	if err := Decode(encoded, decoded); err != nil {
+		t.Fatalf("Decode(KickShrew) error = %v", err)
+	}
+	if decoded.GetSpawnSeq() != 99 {
+		t.Fatalf("SpawnSeq = %d, want 99", decoded.GetSpawnSeq())
 	}
 }

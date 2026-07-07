@@ -27,7 +27,8 @@ WebSocket -> Protocol -> Actor -> FSM -> GameLogic -> Actor -> Protocol -> WebSo
 2. `docs/server-tutorial.md`：教学版架构说明。
 3. `docs/build-plan.md`：项目建设计划。
 4. `docs/skill-map.md`：当前可用技能和缺失技能。
-5. 需要对齐客户端时再读 `../LayaEcsDemo/AGENTS.md`。
+5. `docs/client-sync-contract.md`：客户端同步协议契约。
+6. 需要对齐客户端实现时再读 `../LayaEcsDemo/AGENTS.md`。
 
 ## 工作流
 

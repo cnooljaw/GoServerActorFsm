@@ -11,16 +11,18 @@ message Envelope {
 }
 
 message KickRequest {
-  int32 hammer_type = 1;
-  bool kick_shrew = 2;
-  int32 num_of_shrew = 3;
-  repeated KickShrew shrews = 4;
-  int32 combo_id = 5;
+  uint64 attack_epoch = 1;
+  int32 hammer_type = 2;
+  bool kick_shrew = 3;
+  int32 num_of_shrew = 4;
+  repeated KickShrew shrews = 5;
+  int32 combo_id = 6;
 }
 
 message KickShrew {
   int32 shrew_index = 1;
   int32 protect_type = 2;
+  uint64 spawn_seq = 3;
 }
 
 message KickResponse {
@@ -44,6 +46,84 @@ message ShrewReward {
 message ErrorResponse {
   int32 code = 1;
   string message = 2;
+}
+
+message ShrewTiming {
+  int32 wait_ms = 1;
+  int32 up_ms = 2;
+  int32 stand_ms = 3;
+  int32 down_ms = 4;
+  int32 dizzy_ms = 5;
+}
+
+message ShrewCycle {
+  int32 hole_index = 1;
+  uint64 spawn_seq = 2;
+  int32 shrew_type = 3;
+  int32 protect_type = 4;
+  int32 hp = 5;
+  int64 wait_start_ms = 6;
+  int64 up_start_ms = 7;
+  int64 stand_start_ms = 8;
+  int64 down_start_ms = 9;
+  int64 end_ms = 10;
+}
+
+message GameSnapshot {
+  int64 server_time_ms = 1;
+  uint64 attack_id = 2;
+  uint64 attack_epoch = 3;
+  uint64 timeline_rev = 4;
+  ShrewTiming default_timing = 5;
+  repeated ShrewCycle active_cycles = 6;
+}
+
+message JoinRoomRequest {}
+
+message JoinRoomResponse {
+  uint64 player_id = 1;
+  uint64 attack_id = 2;
+  uint64 attack_epoch = 3;
+  int32 seat_index = 4;
+  int32 room_size = 5;
+  GameSnapshot snapshot = 6;
+}
+
+message GameSnapshotRequest {}
+
+message GameSnapshotResponse {
+  GameSnapshot snapshot = 1;
+}
+
+message TimeSyncRequest {
+  int64 client_send_ms = 1;
+}
+
+message TimeSyncResponse {
+  int64 client_send_ms = 1;
+  int64 server_time_ms = 2;
+}
+
+message ShrewTimelinePush {
+  int64 server_time_ms = 1;
+  uint64 attack_id = 2;
+  uint64 attack_epoch = 3;
+  uint64 timeline_rev = 4;
+  repeated ShrewCycle cycles = 5;
+}
+
+message ShrewStatePush {
+  int64 server_time_ms = 1;
+  uint64 attack_id = 2;
+  uint64 attack_epoch = 3;
+  uint64 timeline_rev = 4;
+  int32 hole_index = 5;
+  uint64 spawn_seq = 6;
+  int32 action_state = 7;
+  int64 phase_start_ms = 8;
+  int64 phase_end_ms = 9;
+  int32 hp = 10;
+  bool clickable = 11;
 }
 
 message Ping {}
