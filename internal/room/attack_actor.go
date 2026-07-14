@@ -109,6 +109,8 @@ func (a *AttackActor) handleEnvelope(command attackEnvelope) {
 		return
 	}
 
+	a.advanceTimeline(a.cfg.NowMS())
+
 	switch protocol.MsgID(command.Envelope.GetMsgId()) {
 	case protocol.JoinRoomReqID:
 		a.send(player.session, protocol.JoinRoomRespID, command.Envelope.GetSeqId(), a.joinRoomResponse(playerID, player.seat))
@@ -145,6 +147,7 @@ func (a *AttackActor) handleKick(player *attackPlayer, envelope *kickpb.Envelope
 	}
 
 	nowMS := a.cfg.NowMS()
+	a.advanceTimeline(nowMS)
 	hitCycles := make([]gamelogic.ShrewCycle, 0, len(request.GetShrews()))
 	for _, shrew := range request.GetShrews() {
 		cycle, ok := a.timeline.ApplyHit(int(shrew.GetShrewIndex()), shrew.GetSpawnSeq(), nowMS)
@@ -171,6 +174,9 @@ func (a *AttackActor) handleKick(player *attackPlayer, envelope *kickpb.Envelope
 	}
 
 	a.send(player.session, protocol.KickRespID, envelope.GetSeqId(), toKickResponse(result.Result))
+	// Timeline precedes the terminal state so a client that receives both can
+	// apply the durable cycle first and retain the Dizzy override.
+	a.broadcastTimeline(nowMS)
 	for _, cycle := range hitCycles {
 		a.broadcast(protocol.ShrewStatePushID, &kickpb.ShrewStatePush{
 			ServerTimeMs: nowMS,
@@ -186,6 +192,28 @@ func (a *AttackActor) handleKick(player *attackPlayer, envelope *kickpb.Envelope
 			Clickable:    false,
 		})
 	}
+}
+
+func (a *AttackActor) advanceTimeline(nowMS int64) {
+	if !a.timeline.Advance(nowMS) {
+		return
+	}
+	a.broadcastTimeline(nowMS)
+}
+
+func (a *AttackActor) broadcastTimeline(nowMS int64) {
+	cycles := a.timeline.ActiveCycles(nowMS)
+	pbCycles := make([]*kickpb.ShrewCycle, 0, len(cycles))
+	for _, cycle := range cycles {
+		pbCycles = append(pbCycles, toProtoCycle(cycle))
+	}
+	a.broadcast(protocol.ShrewTimelinePushID, &kickpb.ShrewTimelinePush{
+		ServerTimeMs: nowMS,
+		AttackId:     a.cfg.AttackID,
+		AttackEpoch:  a.epoch,
+		TimelineRev:  a.timeline.Revision(),
+		Cycles:       pbCycles,
+	})
 }
 
 func (a *AttackActor) joinRoomResponse(playerID uint64, seat int) *kickpb.JoinRoomResponse {

@@ -66,6 +66,14 @@ func TestAttackActorReturnsSnapshotAndBroadcastsKickState(t *testing.T) {
 		t.Fatalf("kick msg_id = %d, want %d", kickEnvelope.GetMsgId(), protocol.KickRespID)
 	}
 
+	timelineEnvelope := readEnvelope(t, out2)
+	if timelineEnvelope.GetSeqId() != 0 {
+		t.Fatalf("timeline seq_id = %d, want 0", timelineEnvelope.GetSeqId())
+	}
+	if timelineEnvelope.GetMsgId() != protocol.ShrewTimelinePushID.Uint32() {
+		t.Fatalf("timeline msg_id = %d, want %d", timelineEnvelope.GetMsgId(), protocol.ShrewTimelinePushID)
+	}
+
 	pushEnvelope := readEnvelope(t, out2)
 	if pushEnvelope.GetSeqId() != 0 {
 		t.Fatalf("push seq_id = %d, want 0", pushEnvelope.GetSeqId())

@@ -87,6 +87,24 @@ func (t *ShrewTimeline) ActiveCycles(nowMS int64) []ShrewCycle {
 	return cycles
 }
 
+// Advance moves every hole to the cycle that contains nowMS. The returned
+// value is true when at least one hole received a newly generated cycle.
+func (t *ShrewTimeline) Advance(nowMS int64) bool {
+	advanced := false
+	for hole := 1; hole <= t.holeCount; hole++ {
+		cycle := t.cycles[hole]
+		for cycle.EndMS <= nowMS {
+			cycle = t.newCycle(hole, cycle.SpawnSeq+1, cycle.EndMS)
+			advanced = true
+		}
+		t.cycles[hole] = cycle
+	}
+	if advanced {
+		t.rev++
+	}
+	return advanced
+}
+
 func (t *ShrewTimeline) ValidateHit(holeIndex int, spawnSeq uint64, nowMS int64) (ShrewCycle, bool) {
 	cycle, ok := t.cycles[holeIndex]
 	if !ok {
@@ -106,7 +124,11 @@ func (t *ShrewTimeline) ApplyHit(holeIndex int, spawnSeq uint64, nowMS int64) (S
 	if !ok {
 		return ShrewCycle{}, false
 	}
-	cycle.HP--
+	// A hit ends the current appearance. The short terminal interval is
+	// represented as Down in the durable cycle and as Dizzy by StatePush.
+	cycle.HP = 0
+	cycle.DownStartMS = nowMS
+	cycle.EndMS = nowMS + int64(t.timing.DizzyMS)
 	t.cycles[holeIndex] = cycle
 	t.rev++
 	return cycle, true

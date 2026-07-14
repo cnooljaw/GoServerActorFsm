@@ -60,3 +60,20 @@ func TestShrewTimelineValidatesCurrentSpawnSeqAndClickableWindow(t *testing.T) {
 		t.Fatalf("ValidateHit at down start = true, want false")
 	}
 }
+
+func TestShrewTimelineAdvanceGeneratesNextServerCycle(t *testing.T) {
+	timing := ShrewTiming{WaitMS: 100, UpMS: 20, StandMS: 200, DownMS: 20, DizzyMS: 50}
+	timeline := NewShrewTimeline(1, timing, 1_000, rand.New(rand.NewSource(1)))
+	first := timeline.ActiveCycles(1_000)[0]
+
+	if !timeline.Advance(first.EndMS) {
+		t.Fatal("Advance at cycle end = false, want true")
+	}
+	next := timeline.ActiveCycles(first.EndMS)[0]
+	if next.SpawnSeq != first.SpawnSeq+1 {
+		t.Fatalf("next SpawnSeq = %d, want %d", next.SpawnSeq, first.SpawnSeq+1)
+	}
+	if next.WaitStartMS != first.EndMS {
+		t.Fatalf("next WaitStartMS = %d, want %d", next.WaitStartMS, first.EndMS)
+	}
+}
