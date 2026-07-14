@@ -19,6 +19,7 @@ const (
 	KickRespID          MsgID = 2002
 	ShrewTimelinePushID MsgID = 3001
 	ShrewStatePushID    MsgID = 3002
+	MapStatePushID      MsgID = 3003
 	ErrorRespID         MsgID = 9001
 )
 
@@ -54,6 +55,8 @@ func MsgName(id MsgID) string {
 		return "shrew_timeline_push"
 	case ShrewStatePushID:
 		return "shrew_state_push"
+	case MapStatePushID:
+		return "map_state_push"
 	case ErrorRespID:
 		return "error_resp"
 	default:

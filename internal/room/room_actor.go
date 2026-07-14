@@ -11,10 +11,15 @@ import (
 var ErrSessionNotJoined = errors.New("room: session not joined")
 
 type Config struct {
-	RoomSize  int
-	HoleCount int
-	Timing    gamelogic.ShrewTiming
-	NowMS     func() int64
+	RoomSize            int
+	HoleCount           int
+	MinPlayersToStart   int
+	InitialActiveShrews int
+	MaxActiveShrews     int
+	InterSpawnMS        int
+	MapCycleMS          int
+	Timing              gamelogic.ShrewTiming
+	NowMS               func() int64
 }
 
 type RoomActor struct {
@@ -43,6 +48,21 @@ func NewRoomActor(cfg Config) *RoomActor {
 	}
 	if cfg.HoleCount <= 0 {
 		cfg.HoleCount = 9
+	}
+	if cfg.MinPlayersToStart <= 0 {
+		cfg.MinPlayersToStart = cfg.RoomSize
+	}
+	if cfg.InitialActiveShrews <= 0 {
+		cfg.InitialActiveShrews = 1
+	}
+	if cfg.MaxActiveShrews <= 0 {
+		cfg.MaxActiveShrews = 1
+	}
+	if cfg.InterSpawnMS <= 0 {
+		cfg.InterSpawnMS = 800
+	}
+	if cfg.MapCycleMS <= 0 {
+		cfg.MapCycleMS = 16_000
 	}
 	if cfg.Timing == (gamelogic.ShrewTiming{}) {
 		cfg.Timing = gamelogic.DefaultShrewTiming()
@@ -134,11 +154,16 @@ func (r *RoomActor) pickAttack() *attackEntry {
 	attack := &attackEntry{
 		id: r.nextAttackID,
 		ref: actor.Start(NewAttackActor(AttackConfig{
-			AttackID:  r.nextAttackID,
-			RoomSize:  r.cfg.RoomSize,
-			HoleCount: r.cfg.HoleCount,
-			Timing:    r.cfg.Timing,
-			NowMS:     r.cfg.NowMS,
+			AttackID:            r.nextAttackID,
+			RoomSize:            r.cfg.RoomSize,
+			HoleCount:           r.cfg.HoleCount,
+			MinPlayersToStart:   r.cfg.MinPlayersToStart,
+			InitialActiveShrews: r.cfg.InitialActiveShrews,
+			MaxActiveShrews:     r.cfg.MaxActiveShrews,
+			InterSpawnMS:        r.cfg.InterSpawnMS,
+			MapCycleMS:          r.cfg.MapCycleMS,
+			Timing:              r.cfg.Timing,
+			NowMS:               r.cfg.NowMS,
 		})),
 	}
 	r.attacks[attack.id] = attack

@@ -1,6 +1,9 @@
 package gamelogic
 
-import "math/rand"
+import (
+	"math/rand"
+	"sort"
+)
 
 const (
 	ShrewActionWait  = 1
@@ -41,30 +44,66 @@ type ShrewCycle struct {
 	EndMS        int64
 }
 
+// ShrewTimeline owns the room's currently active shrew cycles. It never
+// creates a cycle until Start, so a filling room has an empty snapshot.
 type ShrewTimeline struct {
-	holeCount int
-	timing    ShrewTiming
-	rng       *rand.Rand
-	cycles    map[int]ShrewCycle
-	rev       uint64
+	holeCount     int
+	timing        ShrewTiming
+	rng           *rand.Rand
+	maxActive     int
+	interSpawnMS  int64
+	started       bool
+	startAtMS     int64
+	nextSpawnAtMS int64
+	nextSpawnSeq  uint64
+	cycles        map[int]ShrewCycle
+	rev           uint64
 }
 
-func NewShrewTimeline(holeCount int, timing ShrewTiming, startMS int64, rng *rand.Rand) *ShrewTimeline {
+func NewShrewTimeline(holeCount int, timing ShrewTiming, maxActive int, interSpawnMS int64, rng *rand.Rand) *ShrewTimeline {
 	if rng == nil {
 		rng = rand.New(rand.NewSource(1))
 	}
+	if maxActive <= 0 {
+		maxActive = 1
+	}
+	if maxActive > holeCount {
+		maxActive = holeCount
+	}
+	if interSpawnMS < 0 {
+		interSpawnMS = 0
+	}
+	return &ShrewTimeline{
+		holeCount:    holeCount,
+		timing:       timing,
+		rng:          rng,
+		maxActive:    maxActive,
+		interSpawnMS: interSpawnMS,
+		cycles:       make(map[int]ShrewCycle, maxActive),
+	}
+}
 
-	timeline := &ShrewTimeline{
-		holeCount: holeCount,
-		timing:    timing,
-		rng:       rng,
-		cycles:    make(map[int]ShrewCycle, holeCount),
+func (t *ShrewTimeline) Start(startAtMS int64, initialActive int) {
+	if t.started {
+		return
 	}
-	for hole := 1; hole <= holeCount; hole++ {
-		timeline.cycles[hole] = timeline.newCycle(hole, 1, startMS)
+	t.started = true
+	t.startAtMS = startAtMS
+	if initialActive < 0 {
+		initialActive = 0
 	}
-	timeline.rev = 1
-	return timeline
+	if initialActive > t.maxActive {
+		initialActive = t.maxActive
+	}
+	for len(t.cycles) < initialActive {
+		t.spawn(startAtMS)
+	}
+	if len(t.cycles) == 0 {
+		t.nextSpawnAtMS = startAtMS
+	} else {
+		t.nextSpawnAtMS = t.latestEndMS() + t.interSpawnMS
+	}
+	t.rev++
 }
 
 func (t *ShrewTimeline) Revision() uint64 {
@@ -77,27 +116,36 @@ func (t *ShrewTimeline) Timing() ShrewTiming {
 
 func (t *ShrewTimeline) ActiveCycles(nowMS int64) []ShrewCycle {
 	cycles := make([]ShrewCycle, 0, len(t.cycles))
-	for hole := 1; hole <= t.holeCount; hole++ {
-		cycle, ok := t.cycles[hole]
-		if !ok || cycle.EndMS <= nowMS {
-			continue
+	for _, cycle := range t.cycles {
+		if cycle.EndMS > nowMS {
+			cycles = append(cycles, cycle)
 		}
-		cycles = append(cycles, cycle)
 	}
+	sort.Slice(cycles, func(i, j int) bool { return cycles[i].HoleIndex < cycles[j].HoleIndex })
 	return cycles
 }
 
-// Advance moves every hole to the cycle that contains nowMS. The returned
-// value is true when at least one hole received a newly generated cycle.
+// Advance removes elapsed cycles and deterministically creates replacements
+// until the current server time is represented by the active collection.
 func (t *ShrewTimeline) Advance(nowMS int64) bool {
+	if !t.started || nowMS < t.startAtMS {
+		return false
+	}
+
 	advanced := false
-	for hole := 1; hole <= t.holeCount; hole++ {
-		cycle := t.cycles[hole]
-		for cycle.EndMS <= nowMS {
-			cycle = t.newCycle(hole, cycle.SpawnSeq+1, cycle.EndMS)
-			advanced = true
+	for {
+		for hole, cycle := range t.cycles {
+			if cycle.EndMS <= nowMS {
+				delete(t.cycles, hole)
+				advanced = true
+			}
 		}
-		t.cycles[hole] = cycle
+		if len(t.cycles) >= t.maxActive || len(t.cycles) >= t.holeCount || nowMS < t.nextSpawnAtMS {
+			break
+		}
+		t.spawn(t.nextSpawnAtMS)
+		t.nextSpawnAtMS = t.latestEndMS() + t.interSpawnMS
+		advanced = true
 	}
 	if advanced {
 		t.rev++
@@ -130,8 +178,44 @@ func (t *ShrewTimeline) ApplyHit(holeIndex int, spawnSeq uint64, nowMS int64) (S
 	cycle.DownStartMS = nowMS
 	cycle.EndMS = nowMS + int64(t.timing.DizzyMS)
 	t.cycles[holeIndex] = cycle
+	nextAt := cycle.EndMS + t.interSpawnMS
+	if t.nextSpawnAtMS == 0 || nextAt < t.nextSpawnAtMS {
+		t.nextSpawnAtMS = nextAt
+	}
 	t.rev++
 	return cycle, true
+}
+
+func (t *ShrewTimeline) spawn(waitStartMS int64) {
+	hole := t.pickAvailableHole()
+	if hole == 0 {
+		return
+	}
+	t.nextSpawnSeq++
+	t.cycles[hole] = t.newCycle(hole, t.nextSpawnSeq, waitStartMS)
+}
+
+func (t *ShrewTimeline) pickAvailableHole() int {
+	available := make([]int, 0, t.holeCount-len(t.cycles))
+	for hole := 1; hole <= t.holeCount; hole++ {
+		if _, occupied := t.cycles[hole]; !occupied {
+			available = append(available, hole)
+		}
+	}
+	if len(available) == 0 {
+		return 0
+	}
+	return available[t.rng.Intn(len(available))]
+}
+
+func (t *ShrewTimeline) latestEndMS() int64 {
+	var latest int64
+	for _, cycle := range t.cycles {
+		if cycle.EndMS > latest {
+			latest = cycle.EndMS
+		}
+	}
+	return latest
 }
 
 func (t *ShrewTimeline) newCycle(holeIndex int, spawnSeq uint64, waitStartMS int64) ShrewCycle {

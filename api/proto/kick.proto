@@ -69,6 +69,15 @@ message ShrewCycle {
   int64 end_ms = 10;
 }
 
+message MapTimeline {
+  int32 current_map = 1;
+  uint64 map_revision = 2;
+  int64 map_started_ms = 3;
+  int64 next_switch_ms = 4;
+  int32 next_map = 5;
+  int64 cycle_ms = 6;
+}
+
 message GameSnapshot {
   int64 server_time_ms = 1;
   uint64 attack_id = 2;
@@ -76,6 +85,11 @@ message GameSnapshot {
   uint64 timeline_rev = 4;
   ShrewTiming default_timing = 5;
   repeated ShrewCycle active_cycles = 6;
+  int32 room_phase = 7;
+  int32 player_count = 8;
+  int32 room_size = 9;
+  int64 start_at_ms = 10;
+  MapTimeline map_timeline = 11;
 }
 
 message JoinRoomRequest {}
@@ -110,6 +124,17 @@ message ShrewTimelinePush {
   uint64 attack_epoch = 3;
   uint64 timeline_rev = 4;
   repeated ShrewCycle cycles = 5;
+  int32 room_phase = 6;
+  int32 player_count = 7;
+  int32 room_size = 8;
+  int64 start_at_ms = 9;
+}
+
+message MapStatePush {
+  int64 server_time_ms = 1;
+  uint64 attack_id = 2;
+  uint64 attack_epoch = 3;
+  MapTimeline timeline = 4;
 }
 
 message ShrewStatePush {

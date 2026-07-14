@@ -66,6 +66,9 @@ func TestMsgNameReturnsStableNames(t *testing.T) {
 	if got := MsgName(ShrewTimelinePushID); got != "shrew_timeline_push" {
 		t.Fatalf("MsgName(ShrewTimelinePushID) = %q, want shrew_timeline_push", got)
 	}
+	if got := MsgName(MapStatePushID); got != "map_state_push" {
+		t.Fatalf("MsgName(MapStatePushID) = %q, want map_state_push", got)
+	}
 	if got := MsgName(MsgID(999999)); got != "unknown" {
 		t.Fatalf("MsgName(unknown) = %q, want unknown", got)
 	}

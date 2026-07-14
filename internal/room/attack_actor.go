@@ -15,17 +15,32 @@ import (
 )
 
 type AttackConfig struct {
-	AttackID  uint64
-	RoomSize  int
-	HoleCount int
-	Timing    gamelogic.ShrewTiming
-	NowMS     func() int64
+	AttackID            uint64
+	RoomSize            int
+	HoleCount           int
+	MinPlayersToStart   int
+	InitialActiveShrews int
+	MaxActiveShrews     int
+	InterSpawnMS        int
+	MapCycleMS          int
+	Timing              gamelogic.ShrewTiming
+	NowMS               func() int64
 }
+
+type AttackPhase int32
+
+const (
+	AttackPhaseFilling AttackPhase = 1
+	AttackPhaseRunning AttackPhase = 2
+)
 
 type AttackActor struct {
 	cfg         AttackConfig
 	epoch       uint64
+	phase       AttackPhase
+	startAtMS   int64
 	timeline    *gamelogic.ShrewTimeline
+	mapTimeline *gamelogic.MapTimeline
 	players     map[uint64]*attackPlayer
 	sessionByID map[uint64]uint64
 }
@@ -43,6 +58,21 @@ func NewAttackActor(cfg AttackConfig) *AttackActor {
 	if cfg.HoleCount <= 0 {
 		cfg.HoleCount = 9
 	}
+	if cfg.MinPlayersToStart <= 0 {
+		cfg.MinPlayersToStart = cfg.RoomSize
+	}
+	if cfg.InitialActiveShrews <= 0 {
+		cfg.InitialActiveShrews = 1
+	}
+	if cfg.MaxActiveShrews <= 0 {
+		cfg.MaxActiveShrews = 1
+	}
+	if cfg.InterSpawnMS <= 0 {
+		cfg.InterSpawnMS = 800
+	}
+	if cfg.MapCycleMS <= 0 {
+		cfg.MapCycleMS = 16_000
+	}
 	if cfg.Timing == (gamelogic.ShrewTiming{}) {
 		cfg.Timing = gamelogic.DefaultShrewTiming()
 	}
@@ -52,7 +82,9 @@ func NewAttackActor(cfg AttackConfig) *AttackActor {
 	return &AttackActor{
 		cfg:         cfg,
 		epoch:       1,
-		timeline:    gamelogic.NewShrewTimeline(cfg.HoleCount, cfg.Timing, cfg.NowMS(), rand.New(rand.NewSource(int64(cfg.AttackID)))),
+		phase:       AttackPhaseFilling,
+		timeline:    gamelogic.NewShrewTimeline(cfg.HoleCount, cfg.Timing, cfg.MaxActiveShrews, int64(cfg.InterSpawnMS), rand.New(rand.NewSource(int64(cfg.AttackID)))),
+		mapTimeline: gamelogic.NewMapTimeline(int64(cfg.MapCycleMS)),
 		players:     make(map[uint64]*attackPlayer),
 		sessionByID: make(map[uint64]uint64),
 	}
@@ -78,6 +110,14 @@ func (a *AttackActor) handleJoin(command joinAttack) {
 		seat:    seat,
 	}
 	a.sessionByID[command.Session.SessionID] = command.PlayerID
+	if a.phase == AttackPhaseFilling && len(a.players) >= a.cfg.MinPlayersToStart {
+		a.startAtMS = a.cfg.NowMS() + int64(a.cfg.InterSpawnMS)
+		a.phase = AttackPhaseRunning
+		a.timeline.Start(a.startAtMS, a.cfg.InitialActiveShrews)
+		a.mapTimeline.Start(a.startAtMS)
+		a.broadcastTimeline(a.cfg.NowMS())
+		a.broadcastMapState(a.cfg.NowMS())
+	}
 	command.Reply <- joinAttackReply{
 		PlayerID:    command.PlayerID,
 		AttackID:    a.cfg.AttackID,
@@ -109,7 +149,7 @@ func (a *AttackActor) handleEnvelope(command attackEnvelope) {
 		return
 	}
 
-	a.advanceTimeline(a.cfg.NowMS())
+	a.advanceGameState(a.cfg.NowMS())
 
 	switch protocol.MsgID(command.Envelope.GetMsgId()) {
 	case protocol.JoinRoomReqID:
@@ -147,7 +187,7 @@ func (a *AttackActor) handleKick(player *attackPlayer, envelope *kickpb.Envelope
 	}
 
 	nowMS := a.cfg.NowMS()
-	a.advanceTimeline(nowMS)
+	a.advanceGameState(nowMS)
 	hitCycles := make([]gamelogic.ShrewCycle, 0, len(request.GetShrews()))
 	for _, shrew := range request.GetShrews() {
 		cycle, ok := a.timeline.ApplyHit(int(shrew.GetShrewIndex()), shrew.GetSpawnSeq(), nowMS)
@@ -194,11 +234,16 @@ func (a *AttackActor) handleKick(player *attackPlayer, envelope *kickpb.Envelope
 	}
 }
 
-func (a *AttackActor) advanceTimeline(nowMS int64) {
-	if !a.timeline.Advance(nowMS) {
+func (a *AttackActor) advanceGameState(nowMS int64) {
+	if a.phase != AttackPhaseRunning {
 		return
 	}
-	a.broadcastTimeline(nowMS)
+	if a.timeline.Advance(nowMS) {
+		a.broadcastTimeline(nowMS)
+	}
+	if a.mapTimeline.Advance(nowMS) {
+		a.broadcastMapState(nowMS)
+	}
 }
 
 func (a *AttackActor) broadcastTimeline(nowMS int64) {
@@ -213,6 +258,19 @@ func (a *AttackActor) broadcastTimeline(nowMS int64) {
 		AttackEpoch:  a.epoch,
 		TimelineRev:  a.timeline.Revision(),
 		Cycles:       pbCycles,
+		RoomPhase:    int32(a.phase),
+		PlayerCount:  int32(len(a.players)),
+		RoomSize:     int32(a.cfg.RoomSize),
+		StartAtMs:    a.startAtMS,
+	})
+}
+
+func (a *AttackActor) broadcastMapState(nowMS int64) {
+	a.broadcast(protocol.MapStatePushID, &kickpb.MapStatePush{
+		ServerTimeMs: nowMS,
+		AttackId:     a.cfg.AttackID,
+		AttackEpoch:  a.epoch,
+		Timeline:     toProtoMapTimeline(a.mapTimeline.Snapshot()),
 	})
 }
 
@@ -228,14 +286,16 @@ func (a *AttackActor) joinRoomResponse(playerID uint64, seat int) *kickpb.JoinRo
 }
 
 func (a *AttackActor) snapshot() *kickpb.GameSnapshot {
-	cycles := a.timeline.ActiveCycles(a.cfg.NowMS())
+	nowMS := a.cfg.NowMS()
+	a.advanceGameState(nowMS)
+	cycles := a.timeline.ActiveCycles(nowMS)
 	pbCycles := make([]*kickpb.ShrewCycle, 0, len(cycles))
 	for _, cycle := range cycles {
 		pbCycles = append(pbCycles, toProtoCycle(cycle))
 	}
 	timing := a.timeline.Timing()
 	return &kickpb.GameSnapshot{
-		ServerTimeMs: a.cfg.NowMS(),
+		ServerTimeMs: nowMS,
 		AttackId:     a.cfg.AttackID,
 		AttackEpoch:  a.epoch,
 		TimelineRev:  a.timeline.Revision(),
@@ -247,6 +307,11 @@ func (a *AttackActor) snapshot() *kickpb.GameSnapshot {
 			DizzyMs: int32(timing.DizzyMS),
 		},
 		ActiveCycles: pbCycles,
+		RoomPhase:    int32(a.phase),
+		PlayerCount:  int32(len(a.players)),
+		RoomSize:     int32(a.cfg.RoomSize),
+		StartAtMs:    a.startAtMS,
+		MapTimeline:  toProtoMapTimeline(a.mapTimeline.Snapshot()),
 	}
 }
 
@@ -287,6 +352,17 @@ func toProtoCycle(cycle gamelogic.ShrewCycle) *kickpb.ShrewCycle {
 		StandStartMs: cycle.StandStartMS,
 		DownStartMs:  cycle.DownStartMS,
 		EndMs:        cycle.EndMS,
+	}
+}
+
+func toProtoMapTimeline(state gamelogic.MapState) *kickpb.MapTimeline {
+	return &kickpb.MapTimeline{
+		CurrentMap:   state.CurrentMap,
+		MapRevision:  state.Revision,
+		MapStartedMs: state.MapStartedMS,
+		NextSwitchMs: state.NextSwitchMS,
+		NextMap:      state.NextMap,
+		CycleMs:      state.CycleMS,
 	}
 }
 

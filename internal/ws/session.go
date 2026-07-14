@@ -39,8 +39,13 @@ func NewHandlerWithConfig(cfg config.ServerConfig, logger *slog.Logger) http.Han
 	return &Handler{
 		logger: logger,
 		room: actor.Start(room.NewRoomActor(room.Config{
-			RoomSize:  cfg.RoomSize,
-			HoleCount: cfg.HoleCount,
+			RoomSize:            cfg.RoomSize,
+			HoleCount:           cfg.HoleCount,
+			MinPlayersToStart:   cfg.MinPlayersToStart,
+			InitialActiveShrews: cfg.InitialActiveShrews,
+			MaxActiveShrews:     cfg.MaxActiveShrews,
+			InterSpawnMS:        cfg.InterSpawnMS,
+			MapCycleMS:          cfg.MapCycleMS,
 		})),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {

@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestShrewTimelineCreatesServerAbsoluteCycles(t *testing.T) {
+func TestShrewTimelineStartsSparseCyclesAtTheConfiguredServerTime(t *testing.T) {
 	timing := ShrewTiming{
 		WaitMS:  1000,
 		UpMS:    300,
@@ -14,16 +14,17 @@ func TestShrewTimelineCreatesServerAbsoluteCycles(t *testing.T) {
 		DizzyMS: 500,
 	}
 
-	timeline := NewShrewTimeline(9, timing, 10_000, rand.New(rand.NewSource(1)))
+	timeline := NewShrewTimeline(9, timing, 1, 800, rand.New(rand.NewSource(1)))
+	timeline.Start(10_000, 1)
 	cycles := timeline.ActiveCycles(10_000)
 
-	if len(cycles) != 9 {
-		t.Fatalf("len(cycles) = %d, want 9", len(cycles))
+	if len(cycles) != 1 {
+		t.Fatalf("len(cycles) = %d, want 1", len(cycles))
 	}
 
 	cycle := cycles[0]
-	if cycle.HoleIndex != 1 {
-		t.Fatalf("HoleIndex = %d, want 1", cycle.HoleIndex)
+	if cycle.HoleIndex < 1 || cycle.HoleIndex > 9 {
+		t.Fatalf("HoleIndex = %d, want 1..9", cycle.HoleIndex)
 	}
 	if cycle.SpawnSeq != 1 {
 		t.Fatalf("SpawnSeq = %d, want 1", cycle.SpawnSeq)
@@ -47,7 +48,8 @@ func TestShrewTimelineCreatesServerAbsoluteCycles(t *testing.T) {
 
 func TestShrewTimelineValidatesCurrentSpawnSeqAndClickableWindow(t *testing.T) {
 	timing := ShrewTiming{WaitMS: 1000, UpMS: 300, StandMS: 2000, DownMS: 300, DizzyMS: 500}
-	timeline := NewShrewTimeline(9, timing, 10_000, rand.New(rand.NewSource(1)))
+	timeline := NewShrewTimeline(9, timing, 1, 800, rand.New(rand.NewSource(1)))
+	timeline.Start(10_000, 1)
 	cycle := timeline.ActiveCycles(10_000)[0]
 
 	if _, ok := timeline.ValidateHit(cycle.HoleIndex, cycle.SpawnSeq, cycle.StandStartMS); !ok {
@@ -63,17 +65,28 @@ func TestShrewTimelineValidatesCurrentSpawnSeqAndClickableWindow(t *testing.T) {
 
 func TestShrewTimelineAdvanceGeneratesNextServerCycle(t *testing.T) {
 	timing := ShrewTiming{WaitMS: 100, UpMS: 20, StandMS: 200, DownMS: 20, DizzyMS: 50}
-	timeline := NewShrewTimeline(1, timing, 1_000, rand.New(rand.NewSource(1)))
+	timeline := NewShrewTimeline(1, timing, 1, 800, rand.New(rand.NewSource(1)))
+	timeline.Start(1_000, 1)
 	first := timeline.ActiveCycles(1_000)[0]
 
-	if !timeline.Advance(first.EndMS) {
-		t.Fatal("Advance at cycle end = false, want true")
+	if !timeline.Advance(first.EndMS + 800) {
+		t.Fatal("Advance after spawn interval = false, want true")
 	}
-	next := timeline.ActiveCycles(first.EndMS)[0]
+	next := timeline.ActiveCycles(first.EndMS + 800)[0]
 	if next.SpawnSeq != first.SpawnSeq+1 {
 		t.Fatalf("next SpawnSeq = %d, want %d", next.SpawnSeq, first.SpawnSeq+1)
 	}
-	if next.WaitStartMS != first.EndMS {
-		t.Fatalf("next WaitStartMS = %d, want %d", next.WaitStartMS, first.EndMS)
+	if next.WaitStartMS != first.EndMS+800 {
+		t.Fatalf("next WaitStartMS = %d, want %d", next.WaitStartMS, first.EndMS+800)
+	}
+}
+
+func TestShrewTimelineStaysEmptyBeforeStart(t *testing.T) {
+	timeline := NewShrewTimeline(9, DefaultShrewTiming(), 1, 800, rand.New(rand.NewSource(1)))
+	if cycles := timeline.ActiveCycles(10_000); len(cycles) != 0 {
+		t.Fatalf("len(cycles) = %d, want 0 before Start", len(cycles))
+	}
+	if timeline.Advance(10_000) {
+		t.Fatal("Advance before Start = true, want false")
 	}
 }

@@ -20,13 +20,8 @@ func TestSessionHandlesKickRoundTrip(t *testing.T) {
 	defer server.Close()
 
 	url := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws"
-	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
-	if err != nil {
-		t.Fatalf("Dial error = %v", err)
-	}
-	defer conn.Close()
-
-	joined := joinRoom(t, conn, 1)
+	conn, joined, closeRoom := openRunningRoom(t, url)
+	defer closeRoom()
 	cycle := joined.GetSnapshot().GetActiveCycles()[0]
 	waitUntilStand(t, joined.GetSnapshot(), cycle)
 	writeEnvelope(t, conn, 42, protocol.KickReqID, &kickpb.KickRequest{
@@ -75,8 +70,11 @@ func TestSessionHandlesJoinRoomRequest(t *testing.T) {
 	if response.GetPlayerId() == 0 || response.GetAttackId() == 0 || response.GetAttackEpoch() == 0 {
 		t.Fatalf("JoinRoomResponse ids = player %d attack %d epoch %d, want non-zero", response.GetPlayerId(), response.GetAttackId(), response.GetAttackEpoch())
 	}
-	if len(response.GetSnapshot().GetActiveCycles()) != 9 {
-		t.Fatalf("snapshot active cycles = %d, want 9", len(response.GetSnapshot().GetActiveCycles()))
+	if len(response.GetSnapshot().GetActiveCycles()) != 0 {
+		t.Fatalf("snapshot active cycles = %d, want 0 while filling", len(response.GetSnapshot().GetActiveCycles()))
+	}
+	if response.GetSnapshot().GetMapTimeline().GetNextSwitchMs() != 0 {
+		t.Fatalf("filling next_switch_ms = %d, want 0", response.GetSnapshot().GetMapTimeline().GetNextSwitchMs())
 	}
 }
 
@@ -85,13 +83,8 @@ func TestSessionUsesEnvelopeSeqIDAsOnlyRequestReplyID(t *testing.T) {
 	defer server.Close()
 
 	url := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws"
-	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
-	if err != nil {
-		t.Fatalf("Dial error = %v", err)
-	}
-	defer conn.Close()
-
-	joined := joinRoom(t, conn, 1)
+	conn, joined, closeRoom := openRunningRoom(t, url)
+	defer closeRoom()
 	cycle := joined.GetSnapshot().GetActiveCycles()[0]
 	waitUntilStand(t, joined.GetSnapshot(), cycle)
 	writeEnvelope(t, conn, 88, protocol.KickReqID, &kickpb.KickRequest{
@@ -125,13 +118,8 @@ func TestSessionLogsClientOperationAndResult(t *testing.T) {
 	defer server.Close()
 
 	url := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws"
-	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
-	if err != nil {
-		t.Fatalf("Dial error = %v", err)
-	}
-	defer conn.Close()
-
-	joined := joinRoom(t, conn, 1)
+	conn, joined, closeRoom := openRunningRoom(t, url)
+	defer closeRoom()
 	cycle := joined.GetSnapshot().GetActiveCycles()[0]
 	waitUntilStand(t, joined.GetSnapshot(), cycle)
 	writeEnvelope(t, conn, 77, protocol.KickReqID, &kickpb.KickRequest{
@@ -169,18 +157,42 @@ func TestSessionLogsClientOperationAndResult(t *testing.T) {
 func joinRoom(t *testing.T, conn *websocket.Conn, seqID uint32) *kickpb.JoinRoomResponse {
 	t.Helper()
 	writeEnvelope(t, conn, seqID, protocol.JoinRoomReqID, &kickpb.JoinRoomRequest{})
-	envelope := readEnvelope(t, conn)
-	if envelope.GetSeqId() != seqID {
-		t.Fatalf("Envelope.SeqId = %d, want %d", envelope.GetSeqId(), seqID)
+	for {
+		envelope := readEnvelope(t, conn)
+		if envelope.GetSeqId() != seqID || envelope.GetMsgId() != protocol.JoinRoomRespID.Uint32() {
+			continue
+		}
+		response := &kickpb.JoinRoomResponse{}
+		if err := proto.Unmarshal(envelope.GetPayload(), response); err != nil {
+			t.Fatalf("Unmarshal JoinRoomResponse error = %v", err)
+		}
+		return response
 	}
-	if envelope.GetMsgId() != protocol.JoinRoomRespID.Uint32() {
-		t.Fatalf("Envelope.MsgId = %d, want %d", envelope.GetMsgId(), protocol.JoinRoomRespID)
+}
+
+func openRunningRoom(t *testing.T, url string) (*websocket.Conn, *kickpb.JoinRoomResponse, func()) {
+	t.Helper()
+	connections := make([]*websocket.Conn, 0, 3)
+	for i := 0; i < 3; i++ {
+		conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+		if err != nil {
+			for _, opened := range connections {
+				_ = opened.Close()
+			}
+			t.Fatalf("Dial error = %v", err)
+		}
+		connections = append(connections, conn)
 	}
-	response := &kickpb.JoinRoomResponse{}
-	if err := proto.Unmarshal(envelope.GetPayload(), response); err != nil {
-		t.Fatalf("Unmarshal JoinRoomResponse error = %v", err)
+
+	joined := joinRoom(t, connections[0], 1)
+	for index := 1; index < len(connections); index++ {
+		joinRoom(t, connections[index], uint32(index+1))
 	}
-	return response
+	return connections[0], joined, func() {
+		for _, conn := range connections {
+			_ = conn.Close()
+		}
+	}
 }
 
 func waitUntilStand(t *testing.T, snapshot *kickpb.GameSnapshot, cycle *kickpb.ShrewCycle) {
