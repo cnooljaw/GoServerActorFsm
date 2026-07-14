@@ -24,11 +24,19 @@ WebSocket -> Protocol -> Actor -> FSM -> GameLogic -> Actor -> Protocol -> WebSo
 ## 每次优先阅读
 
 1. `AGENTS.md`
-2. `docs/server-tutorial.md`：教学版架构说明。
-3. `docs/build-plan.md`：项目建设计划。
-4. `docs/skill-map.md`：当前可用技能和缺失技能。
-5. `docs/client-sync-contract.md`：客户端同步协议契约。
-6. 需要对齐客户端实现时再读 `../LayaEcsDemo/AGENTS.md`。
+2. `docs/go-project-design.md`：Go 服务端重新设计方案。
+3. `docs/server-tutorial.md`：教学版架构说明。
+4. `docs/build-plan.md`：项目建设计划。
+5. `docs/skill-map.md`：当前可用技能和缺失技能。
+6. `docs/client-sync-contract.md`：客户端同步协议契约。
+7. 需要对齐客户端实现时再读 `../LayaEcsDemo/AGENTS.md`。
+
+## 必须参考的设计技能
+
+- `go-game-server`：游戏服务器分层、房间/局内/玩家、时间线、广播、断线重连。
+- `go-api-design`：protobuf API 边界、消息号、版本演进、错误语义、跨端可读性。
+- `go-actor-architecture`：Actor 所有权、mailbox、串行状态、生命周期、背压。
+- `go-code-review`：实现后按代码评审视角检查职责泄漏、并发风险、测试缺口和过度设计。
 
 ## 工作流
 
